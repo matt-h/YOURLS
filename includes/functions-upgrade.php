@@ -104,8 +104,6 @@ function yourls_upgrade_to_507() {
         sprintf("ALTER TABLE `%s` ADD COLUMN `url_hash` CHAR(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL AFTER `url`;", $table),
         // Add index on the new column
         sprintf("ALTER TABLE `%s` ADD INDEX `url_hash` (`url_hash`);", $table),
-        // Backfill existing rows
-        sprintf("UPDATE `%s` SET `url_hash` = LOWER(SUBSTR(SHA(`url`), 1, 8));", $table),
     );
 
     foreach ($queries as $query) {
@@ -124,6 +122,36 @@ function yourls_upgrade_to_507() {
             echo "$error\n";
         }
         echo "</pre>";
+        die();
+    }
+
+    // Backfill url_hash for existing rows
+    echo "<p>Backfilling url_hash values. Please wait...</p>";
+
+    try {
+        // Get all URLs that need hash backfilling
+        $rows = $ydb->fetchObjects("SELECT `keyword`, `url` FROM `$table` WHERE `url_hash` = ''");
+        $count = 0;
+        $total = count($rows);
+
+        foreach ($rows as $row) {
+            $hash = hash( 'xxh32', $row->url );
+            $ydb->fetchAffected(
+                "UPDATE `$table` SET `url_hash` = :hash WHERE `keyword` = :keyword",
+                array('hash' => $hash, 'keyword' => $row->keyword)
+            );
+            $count++;
+
+            // Show progress for large datasets
+            if ($count % 100 == 0 || $count == $total) {
+                echo "<p>Processed $count of $total URLs...</p>";
+                flush();
+            }
+        }
+
+        echo "<p>Backfilled $count url_hash values.</p>";
+    } catch (\Exception $e) {
+        echo "<p class='error'>Error backfilling url_hash: " . $e->getMessage() . "</p>";
         die();
     }
 
